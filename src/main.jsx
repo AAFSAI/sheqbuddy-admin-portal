@@ -233,6 +233,7 @@ Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access
 Open app: ${settings.downloadLink}
 Activation code: ${registration.activationCode}
 ${licence ? `Licence: ${licence.id}
+Tenant ID: ${licence.tenantId}
 Plan: ${licence.plan}
 User limit: ${licence.userLimit}
 Renewal date: ${formatDate(licence.renewalDate)}
