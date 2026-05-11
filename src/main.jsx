@@ -21,7 +21,7 @@ const seedState = {
   loggedIn: false,
   selectedView: "register",
   settings: {
-    downloadLink: "https://app.sheqbuddy.com/download",
+    downloadLink: "https://app.sheqbuddy.com",
     demoLink: "https://demo.sheqbuddy.com",
     paymentPortalName: "SHEQBuddy payment portal",
     paymentLink: PAYPAL_PAYMENT_URL,
@@ -115,7 +115,7 @@ const seedState = {
       to: "avery@northline.example",
       subject: "SHEQBuddy app download and activation code",
       body:
-        "Hello Avery Morgan,\n\nRemote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for Northline Manufacturing.\n\nDownload app: https://app.sheqbuddy.com/download\nActivation code: SHEQ-NOR-6F29-91DA\n\nPayment portal: SHEQBuddy payment portal",
+        "Hello Avery Morgan,\n\nRemote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for Northline Manufacturing.\n\nOpen app: https://app.sheqbuddy.com\nActivation code: SHEQ-NOR-6F29-91DA\n\nPayment portal: SHEQBuddy payment portal",
       stage: "Drafted",
       createdAt: todayIso()
     }
@@ -230,7 +230,7 @@ function emailBody(registration, settings) {
 
 Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for ${registration.company}.
 
-Download app: ${settings.downloadLink}
+Open app: ${settings.downloadLink}
 Activation code: ${registration.activationCode}
 ${licence ? `Licence: ${licence.id}
 Plan: ${licence.plan}
@@ -863,7 +863,7 @@ function SettingsView({ state, updateState }) {
     <section className="panel">
       <form className="entry-form" onSubmit={submit}>
         <div className="form-grid">
-          <label>App download link <input name="downloadLink" defaultValue={state.settings.downloadLink} /></label>
+          <label>App access link <input name="downloadLink" defaultValue={state.settings.downloadLink} /></label>
           <label>Demo app link <input name="demoLink" defaultValue={state.settings.demoLink} /></label>
           <label>Payment portal name <input name="paymentPortalName" defaultValue={state.settings.paymentPortalName} /></label>
           <label>Payment link <input name="paymentLink" defaultValue={state.settings.paymentLink} /></label>
