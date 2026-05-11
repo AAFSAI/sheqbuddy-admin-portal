@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const STORAGE_KEY = "sheqbuddy-admin-portal-v1";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://api.sheqbuddy.com";
+const API_WORKSPACE_KEY = import.meta.env.VITE_API_WORKSPACE_KEY || "sheqbuddy-admin";
 const ADMIN_EMAIL = "admin@sheqbuddy.com";
 const ADMIN_PASSWORD = "SHEQAdmin1";
 const PAYPAL_PAYMENT_URL = "https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W";
@@ -152,6 +154,22 @@ function saveState(nextState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
 }
 
+async function loadRemoteState() {
+  const response = await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`);
+  if (!response.ok) return null;
+  const data = await response.json();
+  return data.ok ? data.state : null;
+}
+
+async function saveRemoteState(nextState) {
+  const remoteState = { ...nextState, loggedIn: false };
+  await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: remoteState })
+  });
+}
+
 function statusClass(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
@@ -208,10 +226,33 @@ function App() {
   const [state, setState] = useState(loadState);
   const [loginError, setLoginError] = useState("");
 
+  useEffect(() => {
+    let cancelled = false;
+    loadRemoteState()
+      .then((remoteState) => {
+        if (cancelled || !remoteState) return;
+        setState((current) => {
+          const next = {
+            ...current,
+            ...remoteState,
+            loggedIn: current.loggedIn,
+            selectedView: current.selectedView || remoteState.selectedView || "register"
+          };
+          saveState(next);
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function updateState(updater) {
     setState((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       saveState(next);
+      saveRemoteState(next).catch(() => {});
       return next;
     });
   }
