@@ -10,6 +10,7 @@ const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5
 
 const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
+const paymentStatuses = ["Pending", "Paid", "Rejected", "Expired"];
 
 const seedState = {
   loggedIn: false,
@@ -37,7 +38,7 @@ const seedState = {
       requestedUsers: "10",
       paymentMethod: "Credit card",
       paymentReference: "CC-DEMO-1042",
-      paymentStatus: "Pending verification",
+      paymentStatus: "Pending",
       stage: "Pending payment",
       activationCode: "",
       notes: "Awaiting offline payment confirmation."
@@ -53,10 +54,26 @@ const seedState = {
       requestedUsers: "50",
       paymentMethod: "PayPal",
       paymentReference: "PP-DEMO-9088",
-      paymentStatus: "Verified offline",
+      paymentStatus: "Paid",
       stage: "Enabled",
       activationCode: "SHEQ-NOR-6F29-91DA",
       notes: "Payment verified by admin."
+    }
+  ],
+  licences: [
+    {
+      id: "LIC-0001",
+      registrationId: "REG-0002",
+      company: "Northline Manufacturing",
+      contactName: "Avery Morgan",
+      email: "avery@northline.example",
+      plan: "Business - 50 users",
+      userLimit: "50",
+      status: "Active",
+      paymentStatus: "Paid",
+      activationCode: "SHEQ-NOR-6F29-91DA",
+      startDate: todayIso(),
+      renewalDate: addYears(todayIso(), 1)
     }
   ],
   emails: [
@@ -77,9 +94,23 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function addYears(value, years) {
+  const date = new Date(`${value}T00:00:00`);
+  date.setFullYear(date.getFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
 function loadState() {
   try {
-    return { ...seedState, ...JSON.parse(localStorage.getItem(STORAGE_KEY)) };
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return {
+      ...seedState,
+      ...stored,
+      settings: { ...seedState.settings, ...(stored?.settings || {}) },
+      registrations: stored?.registrations || seedState.registrations,
+      licences: stored?.licences || seedState.licences,
+      emails: stored?.emails || seedState.emails
+    };
   } catch {
     return seedState;
   }
@@ -120,12 +151,18 @@ function nextRegistrationId(registrations) {
 }
 
 function emailBody(registration, settings) {
+  const licence = registration.licence;
   return `Hello ${registration.contactName},
 
 Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for ${registration.company}.
 
 Download app: ${settings.downloadLink}
 Activation code: ${registration.activationCode}
+${licence ? `Licence: ${licence.id}
+Plan: ${licence.plan}
+User limit: ${licence.userLimit}
+Renewal date: ${formatDate(licence.renewalDate)}
+` : ""}
 
 Payment portal: ${settings.paymentPortalName}
 Payment link: ${settings.paymentLink}
@@ -193,10 +230,10 @@ function LoginScreen({ error, onLogin }) {
 
 function Portal({ state, updateState }) {
   const stats = useMemo(() => {
-    const pending = state.registrations.filter((item) => item.stage === "Pending payment").length;
-    const enabled = state.registrations.filter((item) => item.stage === "Enabled").length;
+    const pending = state.registrations.filter((item) => item.paymentStatus === "Pending").length;
+    const enabled = state.licences.filter((item) => item.status === "Active").length;
     const emails = state.emails.length;
-    const plansUsed = new Set(state.registrations.map((item) => item.plan)).size;
+    const plansUsed = new Set(state.licences.map((item) => item.plan)).size;
     return { pending, enabled, emails, plansUsed };
   }, [state]);
 
@@ -223,7 +260,7 @@ function Portal({ state, updateState }) {
           {[
             ["register", "New Registration"],
             ["queue", "Payment Queue"],
-            ["enabled", "Enabled Customers"],
+            ["enabled", "Licences"],
             ["emails", "Email Outbox"],
             ["settings", "Portal Settings"]
           ].map(([view, label]) => (
@@ -253,7 +290,7 @@ function Portal({ state, updateState }) {
 
         <section className="stats-grid">
           <Stat label="Pending payment" value={stats.pending} />
-          <Stat label="Enabled customers" value={stats.enabled} />
+          <Stat label="Active licences" value={stats.enabled} />
           <Stat label="Email drafts" value={stats.emails} />
           <Stat label="Plans used" value={stats.plansUsed} />
         </section>
@@ -272,7 +309,7 @@ function viewLabel(view) {
   return {
     register: "New Registration",
     queue: "Payment Queue",
-    enabled: "Enabled Customers",
+    enabled: "Licences",
     emails: "Email Outbox",
     settings: "Portal Settings"
   }[view];
@@ -282,7 +319,7 @@ function viewTitle(view) {
   return {
     register: "Create company registration",
     queue: "Verify payments and enable access",
-    enabled: "Enabled customers and activation codes",
+    enabled: "Licence and subscription records",
     emails: "Activation email drafts",
     settings: "Portal configuration"
   }[view];
@@ -300,7 +337,7 @@ function RegistrationView({ state, updateState }) {
       id: nextRegistrationId(state.registrations),
       createdAt: todayIso(),
       ...data,
-      paymentStatus: "Pending verification",
+      paymentStatus: "Pending",
       stage: "Pending payment",
       activationCode: ""
     };
@@ -350,26 +387,31 @@ function PaymentQueue({ state, updateState }) {
 
   function verify(id) {
     const registration = state.registrations.find((item) => item.id === id);
+    const activationCode = registration.activationCode || activationCodeFor(registration);
+    const licence = createLicence({ ...registration, activationCode }, state.licences);
     const enabledRegistration = {
       ...registration,
       stage: "Enabled",
-      paymentStatus: "Verified offline",
-      activationCode: registration.activationCode || activationCodeFor(registration)
+      paymentStatus: "Paid",
+      activationCode,
+      licenceId: licence.id
     };
-    const email = draftEmail(enabledRegistration, state.settings);
+    const email = draftEmail({ ...enabledRegistration, licence }, state.settings);
     updateState({
       ...state,
       selectedView: "emails",
       registrations: state.registrations.map((item) => (item.id === id ? enabledRegistration : item)),
+      licences: [licence, ...state.licences.filter((item) => item.registrationId !== id)],
       emails: [email, ...state.emails]
     });
   }
 
-  function cancel(id) {
+  function setPaymentStatus(id, paymentStatus) {
+    const stage = paymentStatus === "Rejected" || paymentStatus === "Expired" ? paymentStatus : "Pending payment";
     updateState({
       ...state,
       registrations: state.registrations.map((item) =>
-        item.id === id ? { ...item, stage: "Cancelled", paymentStatus: "Cancelled" } : item
+        item.id === id ? { ...item, stage, paymentStatus } : item
       )
     });
   }
@@ -385,7 +427,8 @@ function PaymentQueue({ state, updateState }) {
               <th>Company</th>
               <th>Contact</th>
               <th>Payment</th>
-              <th>Status</th>
+              <th>Payment status</th>
+              <th>Stage</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -397,11 +440,21 @@ function PaymentQueue({ state, updateState }) {
                 <td>{item.company}</td>
                 <td>{item.contactName}</td>
                 <td>{item.paymentMethod}<br /><small>{item.paymentReference || "No reference"}</small></td>
+                <td>
+                  <select
+                    aria-label={`Payment status for ${item.id}`}
+                    value={item.paymentStatus}
+                    onChange={(event) => setPaymentStatus(item.id, event.target.value)}
+                  >
+                    {paymentStatuses.map((status) => <option key={status}>{status}</option>)}
+                  </select>
+                </td>
                 <td><span className={`pill ${statusClass(item.stage)}`}>{item.stage}</span></td>
                 <td>
                   <div className="action-row">
-                    <button className="secondary-button" type="button" onClick={() => verify(item.id)}>Verify payment</button>
-                    <button className="danger-button" type="button" onClick={() => cancel(item.id)}>Cancel</button>
+                    <button className="secondary-button" type="button" onClick={() => verify(item.id)}>Approve and issue licence</button>
+                    <button className="danger-button" type="button" onClick={() => setPaymentStatus(item.id, "Rejected")}>Reject</button>
+                    <button className="secondary-button" type="button" onClick={() => setPaymentStatus(item.id, "Expired")}>Expire</button>
                   </div>
                 </td>
               </tr>
@@ -414,13 +467,14 @@ function PaymentQueue({ state, updateState }) {
 }
 
 function EnabledCustomers({ state, updateState }) {
-  const enabled = state.registrations.filter((item) => item.stage === "Enabled");
+  const enabled = state.licences;
 
-  function redraft(registration) {
+  function redraft(licence) {
+    const registration = state.registrations.find((item) => item.id === licence.registrationId) || licence;
     updateState({
       ...state,
       selectedView: "emails",
-      emails: [draftEmail(registration, state.settings), ...state.emails]
+      emails: [draftEmail({ ...registration, licence }, state.settings), ...state.emails]
     });
   }
 
@@ -431,10 +485,15 @@ function EnabledCustomers({ state, updateState }) {
           <span className="pill enabled">Enabled</span>
           <h3>{item.company}</h3>
           <div className="record-meta">
-            <span><strong>Registration:</strong> {item.id}</span>
+            <span><strong>Licence:</strong> {item.id}</span>
+            <span><strong>Registration:</strong> {item.registrationId}</span>
             <span><strong>Contact:</strong> {item.contactName}</span>
             <span><strong>Email:</strong> {item.email}</span>
             <span><strong>Plan:</strong> {item.plan}</span>
+            <span><strong>User limit:</strong> {item.userLimit}</span>
+            <span><strong>Start:</strong> {formatDate(item.startDate)}</span>
+            <span><strong>Renewal:</strong> {formatDate(item.renewalDate)}</span>
+            <span><strong>Payment:</strong> {item.paymentStatus}</span>
             <span><strong>Activation:</strong> {item.activationCode}</span>
           </div>
           <button className="secondary-button" type="button" onClick={() => redraft(item)}>Draft email again</button>
@@ -454,6 +513,38 @@ function draftEmail(registration, settings) {
     stage: "Drafted",
     createdAt: todayIso()
   };
+}
+
+function createLicence(registration, existingLicences) {
+  const startDate = todayIso();
+  return {
+    id: nextLicenceId(existingLicences),
+    registrationId: registration.id,
+    company: registration.company,
+    contactName: registration.contactName,
+    email: registration.email,
+    plan: registration.plan,
+    userLimit: registration.requestedUsers || planUserLimit(registration.plan),
+    status: "Active",
+    paymentStatus: "Paid",
+    activationCode: registration.activationCode,
+    startDate,
+    renewalDate: addYears(startDate, 1)
+  };
+}
+
+function nextLicenceId(licences) {
+  const highest = licences.reduce((max, item) => {
+    const number = Number(item.id.replace(/\D/g, ""));
+    return Number.isFinite(number) ? Math.max(max, number) : max;
+  }, 0);
+  return `LIC-${String(highest + 1).padStart(4, "0")}`;
+}
+
+function planUserLimit(plan) {
+  if (plan.includes("Starter")) return "10";
+  if (plan.includes("Business")) return "50";
+  return "Custom";
 }
 
 function EmailOutbox({ state, updateState }) {

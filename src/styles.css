@@ -329,16 +329,20 @@ th {
 }
 
 .enabled,
+.paid,
 .sent {
   background: var(--green);
 }
 
 .pending-payment,
+.pending,
 .drafted {
   background: var(--amber);
 }
 
-.cancelled {
+.cancelled,
+.rejected,
+.expired {
   background: var(--red);
 }
 
