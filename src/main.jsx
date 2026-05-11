@@ -150,6 +150,30 @@ function loadState() {
   }
 }
 
+function parseRemoteState(remoteState) {
+  if (!remoteState) return null;
+  if (typeof remoteState === "string") return JSON.parse(remoteState);
+  return remoteState;
+}
+
+function hydrateRemoteState(remoteState, currentState) {
+  const parsed = parseRemoteState(remoteState);
+  if (!parsed) return null;
+
+  return {
+    ...seedState,
+    ...parsed,
+    settings: { ...seedState.settings, ...(parsed.settings || {}) },
+    registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
+    licences: Array.isArray(parsed.licences) ? parsed.licences : [],
+    tenants: Array.isArray(parsed.tenants) ? parsed.tenants : [],
+    devices: Array.isArray(parsed.devices) ? parsed.devices : [],
+    emails: Array.isArray(parsed.emails) ? parsed.emails : [],
+    loggedIn: currentState.loggedIn,
+    selectedView: currentState.selectedView || parsed.selectedView || "register"
+  };
+}
+
 function saveState(nextState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
 }
@@ -232,12 +256,8 @@ function App() {
       .then((remoteState) => {
         if (cancelled || !remoteState) return;
         setState((current) => {
-          const next = {
-            ...current,
-            ...remoteState,
-            loggedIn: current.loggedIn,
-            selectedView: current.selectedView || remoteState.selectedView || "register"
-          };
+          const next = hydrateRemoteState(remoteState, current);
+          if (!next) return current;
           saveState(next);
           return next;
         });
