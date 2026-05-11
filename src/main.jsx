@@ -10,7 +10,10 @@ const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5
 
 const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
-const paymentStatuses = ["Pending", "Paid", "Rejected", "Expired"];
+const paymentStatuses = ["Pending", "Paid", "Waived", "Rejected", "Expired"];
+const tenantStatuses = ["Active", "Suspended", "Expired", "Cancelled"];
+const licenceStatuses = ["Active", "Suspended", "Expired", "Cancelled", "Trial"];
+const platforms = ["Web", "Windows", "Android", "iOS"];
 
 const seedState = {
   loggedIn: false,
@@ -63,6 +66,7 @@ const seedState = {
   licences: [
     {
       id: "LIC-0001",
+      tenantId: "TEN-0001",
       registrationId: "REG-0002",
       company: "Northline Manufacturing",
       contactName: "Avery Morgan",
@@ -74,6 +78,32 @@ const seedState = {
       activationCode: "SHEQ-NOR-6F29-91DA",
       startDate: todayIso(),
       renewalDate: addYears(todayIso(), 1)
+    }
+  ],
+  tenants: [
+    {
+      id: "TEN-0001",
+      company: "Northline Manufacturing",
+      primaryContact: "Avery Morgan",
+      email: "avery@northline.example",
+      status: "Active",
+      licenceId: "LIC-0001",
+      createdAt: todayIso(),
+      disabledAt: "",
+      notes: "Active demo tenant."
+    }
+  ],
+  devices: [
+    {
+      id: "DEV-0001",
+      tenantId: "TEN-0001",
+      licenceId: "LIC-0001",
+      userName: "Avery Morgan",
+      platform: "Web",
+      deviceName: "Demo browser",
+      activationDate: todayIso(),
+      lastSync: todayIso(),
+      status: "Active"
     }
   ],
   emails: [
@@ -109,6 +139,8 @@ function loadState() {
       settings: { ...seedState.settings, ...(stored?.settings || {}) },
       registrations: stored?.registrations || seedState.registrations,
       licences: stored?.licences || seedState.licences,
+      tenants: stored?.tenants || seedState.tenants,
+      devices: stored?.devices || seedState.devices,
       emails: stored?.emails || seedState.emails
     };
   } catch {
@@ -233,8 +265,9 @@ function Portal({ state, updateState }) {
     const pending = state.registrations.filter((item) => item.paymentStatus === "Pending").length;
     const enabled = state.licences.filter((item) => item.status === "Active").length;
     const emails = state.emails.length;
-    const plansUsed = new Set(state.licences.map((item) => item.plan)).size;
-    return { pending, enabled, emails, plansUsed };
+    const tenants = state.tenants.length;
+    const devices = state.devices.filter((item) => item.status === "Active").length;
+    return { pending, enabled, emails, tenants, devices };
   }, [state]);
 
   function setView(selectedView) {
@@ -260,7 +293,9 @@ function Portal({ state, updateState }) {
           {[
             ["register", "New Registration"],
             ["queue", "Payment Queue"],
+            ["tenants", "Tenants"],
             ["enabled", "Licences"],
+            ["devices", "Devices"],
             ["emails", "Email Outbox"],
             ["settings", "Portal Settings"]
           ].map(([view, label]) => (
@@ -291,13 +326,16 @@ function Portal({ state, updateState }) {
         <section className="stats-grid">
           <Stat label="Pending payment" value={stats.pending} />
           <Stat label="Active licences" value={stats.enabled} />
+          <Stat label="Tenants" value={stats.tenants} />
+          <Stat label="Active devices" value={stats.devices} />
           <Stat label="Email drafts" value={stats.emails} />
-          <Stat label="Plans used" value={stats.plansUsed} />
         </section>
 
         {state.selectedView === "register" && <RegistrationView state={state} updateState={updateState} />}
         {state.selectedView === "queue" && <PaymentQueue state={state} updateState={updateState} />}
+        {state.selectedView === "tenants" && <TenantRecords state={state} updateState={updateState} />}
         {state.selectedView === "enabled" && <EnabledCustomers state={state} updateState={updateState} />}
+        {state.selectedView === "devices" && <DeviceTracking state={state} updateState={updateState} />}
         {state.selectedView === "emails" && <EmailOutbox state={state} updateState={updateState} />}
         {state.selectedView === "settings" && <SettingsView state={state} updateState={updateState} />}
       </main>
@@ -309,7 +347,9 @@ function viewLabel(view) {
   return {
     register: "New Registration",
     queue: "Payment Queue",
+    tenants: "Tenants",
     enabled: "Licences",
+    devices: "Devices",
     emails: "Email Outbox",
     settings: "Portal Settings"
   }[view];
@@ -319,7 +359,9 @@ function viewTitle(view) {
   return {
     register: "Create company registration",
     queue: "Verify payments and enable access",
+    tenants: "Company tenant records",
     enabled: "Licence and subscription records",
+    devices: "Device and app activations",
     emails: "Activation email drafts",
     settings: "Portal configuration"
   }[view];
@@ -385,15 +427,18 @@ function RegistrationView({ state, updateState }) {
 function PaymentQueue({ state, updateState }) {
   const queued = state.registrations.filter((item) => item.stage !== "Enabled");
 
-  function verify(id) {
+  function approve(id, paymentStatus = "Paid") {
     const registration = state.registrations.find((item) => item.id === id);
     const activationCode = registration.activationCode || activationCodeFor(registration);
-    const licence = createLicence({ ...registration, activationCode }, state.licences);
+    const tenant = createTenant({ ...registration }, state.tenants);
+    const licence = createLicence({ ...registration, activationCode }, tenant, state.licences, paymentStatus);
+    const enabledTenant = { ...tenant, licenceId: licence.id, status: "Active", disabledAt: "" };
     const enabledRegistration = {
       ...registration,
       stage: "Enabled",
-      paymentStatus: "Paid",
+      paymentStatus,
       activationCode,
+      tenantId: tenant.id,
       licenceId: licence.id
     };
     const email = draftEmail({ ...enabledRegistration, licence }, state.settings);
@@ -401,6 +446,7 @@ function PaymentQueue({ state, updateState }) {
       ...state,
       selectedView: "emails",
       registrations: state.registrations.map((item) => (item.id === id ? enabledRegistration : item)),
+      tenants: [enabledTenant, ...state.tenants.filter((item) => item.id !== enabledTenant.id)],
       licences: [licence, ...state.licences.filter((item) => item.registrationId !== id)],
       emails: [email, ...state.emails]
     });
@@ -452,7 +498,8 @@ function PaymentQueue({ state, updateState }) {
                 <td><span className={`pill ${statusClass(item.stage)}`}>{item.stage}</span></td>
                 <td>
                   <div className="action-row">
-                    <button className="secondary-button" type="button" onClick={() => verify(item.id)}>Approve and issue licence</button>
+                    <button className="secondary-button" type="button" onClick={() => approve(item.id, "Paid")}>Approve paid</button>
+                    <button className="secondary-button" type="button" onClick={() => approve(item.id, "Waived")}>Approve waived</button>
                     <button className="danger-button" type="button" onClick={() => setPaymentStatus(item.id, "Rejected")}>Reject</button>
                     <button className="secondary-button" type="button" onClick={() => setPaymentStatus(item.id, "Expired")}>Expire</button>
                   </div>
@@ -466,8 +513,64 @@ function PaymentQueue({ state, updateState }) {
   );
 }
 
+function TenantRecords({ state, updateState }) {
+  function updateTenantStatus(id, status) {
+    const disabledAt = status === "Active" ? "" : todayIso();
+    updateState({
+      ...state,
+      tenants: state.tenants.map((item) => (item.id === id ? { ...item, status, disabledAt } : item)),
+      licences: state.licences.map((item) =>
+        item.tenantId === id ? { ...item, status: status === "Active" ? "Active" : status } : item
+      ),
+      devices: state.devices.map((item) =>
+        item.tenantId === id && status !== "Active" ? { ...item, status: "Revoked" } : item
+      )
+    });
+  }
+
+  return (
+    <section className="record-grid">
+      {state.tenants.map((tenant) => (
+        <article className="record-card" key={tenant.id}>
+          <span className={`pill ${statusClass(tenant.status)}`}>{tenant.status}</span>
+          <h3>{tenant.company}</h3>
+          <div className="record-meta">
+            <span><strong>Tenant:</strong> {tenant.id}</span>
+            <span><strong>Primary contact:</strong> {tenant.primaryContact}</span>
+            <span><strong>Email:</strong> {tenant.email}</span>
+            <span><strong>Licence:</strong> {tenant.licenceId}</span>
+            <span><strong>Created:</strong> {formatDate(tenant.createdAt)}</span>
+            {tenant.disabledAt && <span><strong>Disabled:</strong> {formatDate(tenant.disabledAt)}</span>}
+          </div>
+          <label>
+            Tenant status
+            <select value={tenant.status} onChange={(event) => updateTenantStatus(tenant.id, event.target.value)}>
+              {tenantStatuses.map((status) => <option key={status}>{status}</option>)}
+            </select>
+          </label>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 function EnabledCustomers({ state, updateState }) {
   const enabled = state.licences;
+
+  function updateLicenceStatus(id, status) {
+    updateState({
+      ...state,
+      licences: state.licences.map((item) => (item.id === id ? { ...item, status } : item)),
+      tenants: state.tenants.map((item) =>
+        item.licenceId === id ? { ...item, status: status === "Active" || status === "Trial" ? "Active" : status } : item
+      ),
+      devices: state.devices.map((item) =>
+        item.licenceId === id && (status === "Suspended" || status === "Expired" || status === "Cancelled")
+          ? { ...item, status: "Revoked" }
+          : item
+      )
+    });
+  }
 
   function redraft(licence) {
     const registration = state.registrations.find((item) => item.id === licence.registrationId) || licence;
@@ -482,9 +585,10 @@ function EnabledCustomers({ state, updateState }) {
     <section className="record-grid">
       {enabled.map((item) => (
         <article className="record-card" key={item.id}>
-          <span className="pill enabled">Enabled</span>
+          <span className={`pill ${statusClass(item.status)}`}>{item.status}</span>
           <h3>{item.company}</h3>
           <div className="record-meta">
+            <span><strong>Tenant:</strong> {item.tenantId}</span>
             <span><strong>Licence:</strong> {item.id}</span>
             <span><strong>Registration:</strong> {item.registrationId}</span>
             <span><strong>Contact:</strong> {item.contactName}</span>
@@ -496,6 +600,12 @@ function EnabledCustomers({ state, updateState }) {
             <span><strong>Payment:</strong> {item.paymentStatus}</span>
             <span><strong>Activation:</strong> {item.activationCode}</span>
           </div>
+          <label>
+            Licence status
+            <select value={item.status} onChange={(event) => updateLicenceStatus(item.id, event.target.value)}>
+              {licenceStatuses.map((status) => <option key={status}>{status}</option>)}
+            </select>
+          </label>
           <button className="secondary-button" type="button" onClick={() => redraft(item)}>Draft email again</button>
         </article>
       ))}
@@ -515,22 +625,50 @@ function draftEmail(registration, settings) {
   };
 }
 
-function createLicence(registration, existingLicences) {
-  const startDate = todayIso();
+function createTenant(registration, existingTenants) {
+  const existing = existingTenants.find((item) => item.company.toLowerCase() === registration.company.toLowerCase());
+  if (existing) {
+    return { ...existing, status: "Active", disabledAt: "" };
+  }
   return {
-    id: nextLicenceId(existingLicences),
+    id: nextTenantId(existingTenants),
+    company: registration.company,
+    primaryContact: registration.contactName,
+    email: registration.email,
+    status: "Active",
+    licenceId: "",
+    createdAt: todayIso(),
+    disabledAt: "",
+    notes: registration.notes || ""
+  };
+}
+
+function createLicence(registration, tenant, existingLicences, paymentStatus = "Paid") {
+  const startDate = todayIso();
+  const id = nextLicenceId(existingLicences);
+  return {
+    id,
+    tenantId: tenant.id,
     registrationId: registration.id,
     company: registration.company,
     contactName: registration.contactName,
     email: registration.email,
     plan: registration.plan,
     userLimit: registration.requestedUsers || planUserLimit(registration.plan),
-    status: "Active",
-    paymentStatus: "Paid",
+    status: paymentStatus === "Waived" ? "Trial" : "Active",
+    paymentStatus,
     activationCode: registration.activationCode,
     startDate,
     renewalDate: addYears(startDate, 1)
   };
+}
+
+function nextTenantId(tenants) {
+  const highest = tenants.reduce((max, item) => {
+    const number = Number(item.id.replace(/\D/g, ""));
+    return Number.isFinite(number) ? Math.max(max, number) : max;
+  }, 0);
+  return `TEN-${String(highest + 1).padStart(4, "0")}`;
 }
 
 function nextLicenceId(licences) {
@@ -545,6 +683,83 @@ function planUserLimit(plan) {
   if (plan.includes("Starter")) return "10";
   if (plan.includes("Business")) return "50";
   return "Custom";
+}
+
+function DeviceTracking({ state, updateState }) {
+  function submit(event) {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const licence = state.licences.find((item) => item.id === data.licenceId);
+    const device = {
+      id: nextDeviceId(state.devices),
+      tenantId: licence?.tenantId || "",
+      licenceId: data.licenceId,
+      userName: data.userName,
+      platform: data.platform,
+      deviceName: data.deviceName,
+      activationDate: todayIso(),
+      lastSync: todayIso(),
+      status: "Active"
+    };
+    updateState({ ...state, devices: [device, ...state.devices] });
+    event.currentTarget.reset();
+  }
+
+  function revoke(id) {
+    updateState({
+      ...state,
+      devices: state.devices.map((item) => (item.id === id ? { ...item, status: "Revoked" } : item))
+    });
+  }
+
+  return (
+    <section className="view-stack">
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h3>Record device activation</h3>
+            <p className="muted">Tracks devices that have activated the app against a licence. In production this will be populated by the activation API.</p>
+          </div>
+        </div>
+        <form className="entry-form" onSubmit={submit}>
+          <div className="form-grid">
+            <label>Licence <select name="licenceId">{state.licences.map((item) => <option key={item.id}>{item.id}</option>)}</select></label>
+            <label>User <input name="userName" required placeholder="Avery Morgan" /></label>
+            <label>Platform <select name="platform">{platforms.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Device name <input name="deviceName" required placeholder="Avery laptop" /></label>
+          </div>
+          <button className="primary-button" type="submit">Add device activation</button>
+        </form>
+      </section>
+
+      <section className="record-grid">
+        {state.devices.map((device) => (
+          <article className="record-card" key={device.id}>
+            <span className={`pill ${statusClass(device.status)}`}>{device.status}</span>
+            <h3>{device.deviceName}</h3>
+            <div className="record-meta">
+              <span><strong>Device:</strong> {device.id}</span>
+              <span><strong>Tenant:</strong> {device.tenantId}</span>
+              <span><strong>Licence:</strong> {device.licenceId}</span>
+              <span><strong>User:</strong> {device.userName}</span>
+              <span><strong>Platform:</strong> {device.platform}</span>
+              <span><strong>Activated:</strong> {formatDate(device.activationDate)}</span>
+              <span><strong>Last sync:</strong> {formatDate(device.lastSync)}</span>
+            </div>
+            <button className="danger-button" type="button" onClick={() => revoke(device.id)}>Revoke device</button>
+          </article>
+        ))}
+      </section>
+    </section>
+  );
+}
+
+function nextDeviceId(devices) {
+  const highest = devices.reduce((max, item) => {
+    const number = Number(item.id.replace(/\D/g, ""));
+    return Number.isFinite(number) ? Math.max(max, number) : max;
+  }, 0);
+  return `DEV-${String(highest + 1).padStart(4, "0")}`;
 }
 
 function EmailOutbox({ state, updateState }) {

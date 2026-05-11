@@ -329,7 +329,10 @@ th {
 }
 
 .enabled,
+.active,
 .paid,
+.waived,
+.trial,
 .sent {
   background: var(--green);
 }
@@ -342,8 +345,15 @@ th {
 
 .cancelled,
 .rejected,
-.expired {
+.expired,
+.suspended,
+.revoked {
   background: var(--red);
+}
+
+.view-stack {
+  display: grid;
+  gap: 14px;
 }
 
 .record-grid {
