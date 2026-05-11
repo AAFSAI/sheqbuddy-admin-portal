@@ -6,6 +6,7 @@ const STORAGE_KEY = "sheqbuddy-admin-portal-v1";
 const ADMIN_EMAIL = "admin@sheqbuddy.com";
 const ADMIN_PASSWORD = "SHEQAdmin1";
 const PAYPAL_PAYMENT_URL = "https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W";
+const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5826";
 
 const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
@@ -18,6 +19,7 @@ const seedState = {
     demoLink: "https://demo.sheqbuddy.com",
     paymentPortalName: "SHEQBuddy payment portal",
     paymentLink: PAYPAL_PAYMENT_URL,
+    bankTransferDetails: BANK_TRANSFER_DETAILS,
     adminEmail: "admin@sheqbuddy.com",
     supportEmail: "info@SHEQBuddy.com",
     emailFooter:
@@ -127,6 +129,7 @@ Activation code: ${registration.activationCode}
 
 Payment portal: ${settings.paymentPortalName}
 Payment link: ${settings.paymentLink}
+Bank transfer: ${settings.bankTransferDetails}
 Support: ${settings.supportEmail}
 
 ${settings.emailFooter}`;
@@ -333,6 +336,9 @@ function RegistrationView({ state, updateState }) {
         <p className="muted">
           Current PayPal payment link: <a href={state.settings.paymentLink} target="_blank" rel="noreferrer">{state.settings.paymentLink}</a>
         </p>
+        <p className="muted">
+          Bank transfer: {state.settings.bankTransferDetails}
+        </p>
         <button className="primary-button" type="submit">Add to payment queue</button>
       </form>
     </section>
@@ -494,6 +500,7 @@ function SettingsView({ state, updateState }) {
           <label>Demo app link <input name="demoLink" defaultValue={state.settings.demoLink} /></label>
           <label>Payment portal name <input name="paymentPortalName" defaultValue={state.settings.paymentPortalName} /></label>
           <label>Payment link <input name="paymentLink" defaultValue={state.settings.paymentLink} /></label>
+          <label>Bank transfer details <input name="bankTransferDetails" defaultValue={state.settings.bankTransferDetails} /></label>
           <label>Admin email <input name="adminEmail" type="email" defaultValue={state.settings.adminEmail} /></label>
           <label>Support email <input name="supportEmail" type="email" defaultValue={state.settings.supportEmail} /></label>
           <label className="wide">Email footer <textarea name="emailFooter" defaultValue={state.settings.emailFooter} /></label>

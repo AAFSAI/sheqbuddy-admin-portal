@@ -25,3 +25,7 @@ Vite React portal for registration, payment verification, activation code issue 
 ## Current PayPal payment link
 
 `https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W`
+
+## Current bank transfer details
+
+RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5826
