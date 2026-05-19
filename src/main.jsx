@@ -9,6 +9,7 @@ const ADMIN_EMAIL = "admin@sheqbuddy.com";
 const ADMIN_PASSWORD = "SHEQAdmin1";
 const PAYPAL_PAYMENT_URL = "https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W";
 const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5826";
+const SAMPLE_INVOICE_URL = "https://sheqbuddy.com/docs/sample-tax-invoice.html";
 
 const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
@@ -25,6 +26,7 @@ const seedState = {
     demoLink: "https://demo.sheqbuddy.com",
     paymentPortalName: "SHEQBuddy payment portal",
     paymentLink: PAYPAL_PAYMENT_URL,
+    sampleInvoiceLink: SAMPLE_INVOICE_URL,
     bankTransferDetails: BANK_TRANSFER_DETAILS,
     adminEmail: "admin@sheqbuddy.com",
     supportEmail: "info@SHEQBuddy.com",
@@ -249,6 +251,18 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function formatInvoiceDate(value = todayIso()) {
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function currency(value) {
+  return `$${Number(value).toFixed(2)}`;
+}
+
 function appAccessLink(value = seedState.settings.downloadLink) {
   return String(value || seedState.settings.downloadLink).replace(/\/download\/?$/i, "");
 }
@@ -293,6 +307,78 @@ Bank transfer: ${settings.bankTransferDetails}
 Support: ${settings.supportEmail}
 
 ${settings.emailFooter}`;
+}
+
+function invoiceNumberFor(registration) {
+  const number = String(registration.id || "").replace(/\D/g, "").padStart(4, "0") || "0001";
+  return `SB${number}`;
+}
+
+function invoiceAmounts(paymentStatus) {
+  const waived = paymentStatus === "Waived";
+  const subtotal = waived ? 0 : 600;
+  const gst = waived ? 0 : 60;
+  return {
+    rate: 600,
+    amount: subtotal,
+    subtotal,
+    gstTaxablePortion: subtotal,
+    gst,
+    total: subtotal + gst
+  };
+}
+
+function invoiceBody(registration, settings, paymentStatus) {
+  const licence = registration.licence;
+  const amounts = invoiceAmounts(paymentStatus);
+  const userCount = licence?.userLimit || registration.requestedUsers || planUserLimit(registration.plan);
+  const sampleInvoiceLink = settings.sampleInvoiceLink || SAMPLE_INVOICE_URL;
+
+  return `TAX INVOICE
+
+RAMA Technologies Pty Ltd
+SHEQBuddy.com
+Elimbah
+Queensland
+4516
+ABN: 90 152 277 793
+
+Tax Invoice to:
+Company: ${registration.company}
+Contact: ${registration.contactName}
+Customer contact email: ${registration.email}
+${registration.businessNumber ? `ACN / ABN: ${registration.businessNumber}\n` : ""}
+Invoice #: ${invoiceNumberFor(registration)}
+Date: ${formatInvoiceDate(todayIso())}
+Terms: 15 days from date of invoice
+
+Description: SHEQBuddy Subscription
+Users: ${userCount}
+Rate: ${currency(amounts.rate)}
+Amount: ${currency(amounts.amount)}
+
+Sub Total: ${currency(amounts.subtotal)}
+GST taxable portion: ${currency(amounts.gstTaxablePortion)}
+GST 10%: ${currency(amounts.gst)}
+Total: ${currency(amounts.total)}
+
+Payment status: ${paymentStatus}
+Registration: ${registration.id}
+${licence ? `Licence: ${licence.id}
+Tenant ID: ${licence.tenantId}
+Renewal date: ${formatDate(licence.renewalDate)}
+` : ""}
+Bank details:
+National Bank Australia
+BIC or SWIFT code: NATAAU3303M
+RAMA Technologies Pty Ltd
+BSB: 084-789
+Acct No: 11-868-5826
+162 Victoria Street
+Mackay, Qld, 4740
+
+Sample invoice format: ${sampleInvoiceLink}
+Support: ${settings.supportEmail}`;
 }
 
 function App() {
@@ -554,14 +640,15 @@ function PaymentQueue({ state, updateState }) {
       tenantId: tenant.id,
       licenceId: licence.id
     };
-    const email = draftEmail({ ...enabledRegistration, licence }, state.settings);
+    const activationEmail = draftEmail({ ...enabledRegistration, licence }, state.settings);
+    const invoiceEmail = draftInvoiceEmail({ ...enabledRegistration, licence }, state.settings, paymentStatus);
     updateState({
       ...state,
       selectedView: "emails",
       registrations: state.registrations.map((item) => (item.id === id ? enabledRegistration : item)),
       tenants: [enabledTenant, ...state.tenants.filter((item) => item.id !== enabledTenant.id)],
       licences: [licence, ...state.licences.filter((item) => item.registrationId !== id)],
-      emails: [email, ...state.emails]
+      emails: [activationEmail, invoiceEmail, ...state.emails]
     });
   }
 
@@ -693,7 +780,11 @@ function EnabledCustomers({ state, updateState }) {
     updateState({
       ...state,
       selectedView: "emails",
-      emails: [draftEmail({ ...registration, licence }, state.settings), ...state.emails]
+      emails: [
+        draftEmail({ ...registration, licence }, state.settings),
+        draftInvoiceEmail({ ...registration, licence }, state.settings, licence.paymentStatus),
+        ...state.emails
+      ]
     });
   }
 
@@ -738,6 +829,18 @@ function draftEmail(registration, settings) {
     to: registration.email,
     subject: "SHEQBuddy app access and activation code",
     body: emailBody(registration, emailSettings),
+    stage: "Drafted",
+    createdAt: todayIso()
+  };
+}
+
+function draftInvoiceEmail(registration, settings, paymentStatus = "Paid") {
+  return {
+    id: `EMAIL-${Date.now()}-INV`,
+    registrationId: registration.id,
+    to: registration.email,
+    subject: `SHEQBuddy tax invoice ${invoiceNumberFor(registration)} - ${registration.company}`,
+    body: invoiceBody(registration, settings, paymentStatus),
     stage: "Drafted",
     createdAt: todayIso()
   };
@@ -927,6 +1030,7 @@ function SettingsView({ state, updateState }) {
           <label>Demo app link <input name="demoLink" defaultValue={state.settings.demoLink} /></label>
           <label>Payment portal name <input name="paymentPortalName" defaultValue={state.settings.paymentPortalName} /></label>
           <label>Payment link <input name="paymentLink" defaultValue={state.settings.paymentLink} /></label>
+          <label>Sample invoice link <input name="sampleInvoiceLink" defaultValue={state.settings.sampleInvoiceLink || SAMPLE_INVOICE_URL} /></label>
           <label>Bank transfer details <input name="bankTransferDetails" defaultValue={state.settings.bankTransferDetails} /></label>
           <label>Admin email <input name="adminEmail" type="email" defaultValue={state.settings.adminEmail} /></label>
           <label>Support email <input name="supportEmail" type="email" defaultValue={state.settings.supportEmail} /></label>
