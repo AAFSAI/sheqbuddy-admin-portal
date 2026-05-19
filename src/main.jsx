@@ -13,7 +13,7 @@ const SAMPLE_INVOICE_URL = "https://sheqbuddy.com/docs/sample-tax-invoice.html";
 
 const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
-const paymentStatuses = ["Pending", "Paid", "Waived", "Rejected", "Expired"];
+const paymentStatuses = ["Pending", "Paid", "Waived", "Trial", "Refunded", "Rejected", "Expired"];
 const tenantStatuses = ["Active", "Suspended", "Expired", "Cancelled"];
 const licenceStatuses = ["Active", "Suspended", "Expired", "Cancelled", "Trial"];
 const platforms = ["Web", "Windows", "Android", "iOS"];
@@ -133,6 +133,12 @@ function todayIso() {
 function addYears(value, years) {
   const date = new Date(`${value}T00:00:00`);
   date.setFullYear(date.getFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(value, days) {
+  const date = new Date(`${value}T00:00:00`);
+  date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
 }
 
@@ -315,7 +321,7 @@ function invoiceNumberFor(registration) {
 }
 
 function invoiceAmounts(paymentStatus) {
-  const waived = paymentStatus === "Waived";
+  const waived = paymentStatus === "Waived" || paymentStatus === "Refunded";
   const subtotal = waived ? 0 : 600;
   const gst = waived ? 0 : 60;
   return {
@@ -378,6 +384,75 @@ Acct No: 11-868-5826
 Mackay, Qld, 4740
 
 Sample invoice format: ${sampleInvoiceLink}
+Support: ${settings.supportEmail}`;
+}
+
+function routedRecipients(registration, settings) {
+  return [registration.email, settings.supportEmail || seedState.settings.supportEmail]
+    .filter(Boolean)
+    .filter((email, index, list) => list.indexOf(email) === index)
+    .join(", ");
+}
+
+function trialNoticeBody(registration, settings) {
+  const licence = registration.licence;
+  const trialEndDate = licence?.trialEndDate || addDays(todayIso(), 30);
+
+  return `Hello ${registration.contactName},
+
+SHEQBuddy has enabled a 30 day free trial for ${registration.company}.
+
+Open app: ${appAccessLink(settings.downloadLink)}
+Activation code: ${registration.activationCode}
+Licence: ${licence?.id || registration.licenceId}
+Tenant ID: ${licence?.tenantId || registration.tenantId}
+Trial starts: ${formatDate(todayIso())}
+Trial ends: ${formatDate(trialEndDate)}
+Subscription start date if activated: ${formatDate(licence?.startDate || addDays(todayIso(), 30))}
+User limit: ${licence?.userLimit || registration.requestedUsers || planUserLimit(registration.plan)}
+
+This trial notice is routed to the customer contact and SHEQBuddy.
+Before the trial ends, the customer can activate the app for the annual subscription or ask SHEQBuddy to deactivate access.
+
+Payment link: ${settings.paymentLink}
+Support: ${settings.supportEmail}`;
+}
+
+function trialFollowUpBody(registration, settings) {
+  const licence = registration.licence;
+  const trialEndDate = licence?.trialEndDate || addDays(todayIso(), 30);
+  const followUpDate = addDays(todayIso(), 20);
+
+  return `Hello ${registration.contactName},
+
+This is the 20 day follow-up reminder for the ${registration.company} SHEQBuddy trial.
+
+Send on: ${formatDate(followUpDate)}
+Trial ends: ${formatDate(trialEndDate)}
+Days remaining at follow-up: 10
+
+To continue using SHEQBuddy after the trial, activate the app by completing payment:
+${settings.paymentLink}
+
+If the customer does not want to continue, SHEQBuddy can deactivate the app after the 30 day trial period.
+
+Registration: ${registration.id}
+Licence: ${licence?.id || registration.licenceId}
+Tenant ID: ${licence?.tenantId || registration.tenantId}
+Support: ${settings.supportEmail}`;
+}
+
+function refundBody(registration, settings) {
+  return `Hello ${registration.contactName},
+
+SHEQBuddy has recorded a refund for ${registration.company}.
+
+Registration: ${registration.id}
+Payment status: Refunded
+Customer contact email: ${registration.email}
+
+Access has not been enabled through this refund action. If app access had already been enabled, suspend the tenant or licence record before confirming the refund is complete.
+
 Support: ${settings.supportEmail}`;
 }
 
@@ -652,8 +727,57 @@ function PaymentQueue({ state, updateState }) {
     });
   }
 
+  function approveTrial(id) {
+    const registration = state.registrations.find((item) => item.id === id);
+    const activationCode = registration.activationCode || activationCodeFor(registration);
+    const tenant = createTenant({ ...registration }, state.tenants);
+    const licence = createLicence({ ...registration, activationCode }, tenant, state.licences, "Trial");
+    const enabledTenant = { ...tenant, licenceId: licence.id, status: "Active", disabledAt: "" };
+    const enabledRegistration = {
+      ...registration,
+      stage: "Enabled",
+      paymentStatus: "Trial",
+      activationCode,
+      tenantId: tenant.id,
+      licenceId: licence.id,
+      trialEndDate: licence.trialEndDate
+    };
+    const registrationWithLicence = { ...enabledRegistration, licence };
+    updateState({
+      ...state,
+      selectedView: "emails",
+      registrations: state.registrations.map((item) => (item.id === id ? enabledRegistration : item)),
+      tenants: [enabledTenant, ...state.tenants.filter((item) => item.id !== enabledTenant.id)],
+      licences: [licence, ...state.licences.filter((item) => item.registrationId !== id)],
+      emails: [
+        draftEmail(registrationWithLicence, state.settings),
+        draftTrialNoticeEmail(registrationWithLicence, state.settings),
+        draftTrialFollowUpEmail(registrationWithLicence, state.settings),
+        ...state.emails
+      ]
+    });
+  }
+
+  function recordRefund(id) {
+    const registration = state.registrations.find((item) => item.id === id);
+    const refundedRegistration = {
+      ...registration,
+      stage: "Refunded",
+      paymentStatus: "Refunded"
+    };
+    updateState({
+      ...state,
+      selectedView: "emails",
+      registrations: state.registrations.map((item) => (item.id === id ? refundedRegistration : item)),
+      emails: [draftRefundEmail(refundedRegistration, state.settings), ...state.emails]
+    });
+  }
+
   function setPaymentStatus(id, paymentStatus) {
-    const stage = paymentStatus === "Rejected" || paymentStatus === "Expired" ? paymentStatus : "Pending payment";
+    const stage =
+      paymentStatus === "Rejected" || paymentStatus === "Expired" || paymentStatus === "Refunded"
+        ? paymentStatus
+        : "Pending payment";
     updateState({
       ...state,
       registrations: state.registrations.map((item) =>
@@ -702,6 +826,8 @@ function PaymentQueue({ state, updateState }) {
                   <div className="action-row">
                     <button className="secondary-button" type="button" onClick={() => approve(item.id, "Paid")}>Approve paid</button>
                     <button className="secondary-button" type="button" onClick={() => approve(item.id, "Waived")}>Approve waived</button>
+                    <button className="secondary-button" type="button" onClick={() => approveTrial(item.id)}>Approve 30-day trial</button>
+                    <button className="secondary-button" type="button" onClick={() => recordRefund(item.id)}>Record refund</button>
                     <button className="danger-button" type="button" onClick={() => setPaymentStatus(item.id, "Rejected")}>Reject</button>
                     <button className="secondary-button" type="button" onClick={() => setPaymentStatus(item.id, "Expired")}>Expire</button>
                   </div>
@@ -803,6 +929,7 @@ function EnabledCustomers({ state, updateState }) {
             <span><strong>Email:</strong> {item.email}</span>
             <span><strong>Plan:</strong> {item.plan}</span>
             <span><strong>User limit:</strong> {item.userLimit}</span>
+            {item.trialEndDate && <span><strong>Trial ends:</strong> {formatDate(item.trialEndDate)}</span>}
             <span><strong>Start:</strong> {formatDate(item.startDate)}</span>
             <span><strong>Renewal:</strong> {formatDate(item.renewalDate)}</span>
             <span><strong>Payment:</strong> {item.paymentStatus}</span>
@@ -835,17 +962,48 @@ function draftEmail(registration, settings) {
 }
 
 function draftInvoiceEmail(registration, settings, paymentStatus = "Paid") {
-  const recipients = [registration.email, settings.supportEmail || seedState.settings.supportEmail]
-    .filter(Boolean)
-    .filter((email, index, list) => list.indexOf(email) === index)
-    .join(", ");
-
   return {
     id: `EMAIL-${Date.now()}-INV`,
     registrationId: registration.id,
-    to: recipients,
+    to: routedRecipients(registration, settings),
     subject: `SHEQBuddy tax invoice ${invoiceNumberFor(registration)} - ${registration.company}`,
     body: invoiceBody(registration, settings, paymentStatus),
+    stage: "Drafted",
+    createdAt: todayIso()
+  };
+}
+
+function draftTrialNoticeEmail(registration, settings) {
+  return {
+    id: `EMAIL-${Date.now()}-TRIAL`,
+    registrationId: registration.id,
+    to: routedRecipients(registration, settings),
+    subject: `SHEQBuddy 30 day trial started - ${registration.company}`,
+    body: trialNoticeBody(registration, settings),
+    stage: "Drafted",
+    createdAt: todayIso()
+  };
+}
+
+function draftTrialFollowUpEmail(registration, settings) {
+  return {
+    id: `EMAIL-${Date.now()}-TRIAL-FOLLOWUP`,
+    registrationId: registration.id,
+    to: routedRecipients(registration, settings),
+    subject: `SHEQBuddy trial reminder - 10 days remaining - ${registration.company}`,
+    body: trialFollowUpBody(registration, settings),
+    stage: "Drafted",
+    createdAt: addDays(todayIso(), 20)
+  };
+}
+
+function draftRefundEmail(registration, settings) {
+  return {
+    id: `EMAIL-${Date.now()}-REFUND`,
+    registrationId: registration.id,
+    to: routedRecipients(registration, settings),
+    subject: `SHEQBuddy refund recorded - ${registration.company}`,
+    body: refundBody(registration, settings),
     stage: "Drafted",
     createdAt: todayIso()
   };
@@ -871,7 +1029,8 @@ function createTenant(registration, existingTenants) {
 }
 
 function createLicence(registration, tenant, existingLicences, paymentStatus = "Paid") {
-  const startDate = todayIso();
+  const trialEndDate = paymentStatus === "Trial" ? addDays(todayIso(), 30) : "";
+  const startDate = paymentStatus === "Trial" ? trialEndDate : todayIso();
   const id = nextLicenceId(existingLicences);
   return {
     id,
@@ -883,9 +1042,10 @@ function createLicence(registration, tenant, existingLicences, paymentStatus = "
     email: registration.email,
     plan: registration.plan,
     userLimit: registration.requestedUsers || planUserLimit(registration.plan),
-    status: paymentStatus === "Waived" ? "Trial" : "Active",
+    status: paymentStatus === "Waived" || paymentStatus === "Trial" ? "Trial" : "Active",
     paymentStatus,
     activationCode: registration.activationCode,
+    trialEndDate,
     startDate,
     renewalDate: addYears(startDate, 1)
   };
