@@ -304,7 +304,8 @@ function emailBody(registration, settings) {
 Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for ${registration.company}.
 ${registration.businessNumber ? `\nACN / ABN: ${registration.businessNumber}\n` : ""}
 
-Open app: ${appAccessLink(settings.downloadLink)}
+Open the SHEQBuddy web app / installable PWA: ${appAccessLink(settings.downloadLink)}
+Use "First time company setup" on the login page to activate the company workspace.
 Activation code: ${registration.activationCode}
 ${licence ? `Licence: ${licence.id}
 Tenant ID: ${licence.tenantId}
@@ -409,7 +410,8 @@ function trialNoticeBody(registration, settings) {
 
 SHEQBuddy has enabled a 30 day free trial for ${registration.company}.
 
-Open app: ${appAccessLink(settings.downloadLink)}
+Open the SHEQBuddy web app / installable PWA: ${appAccessLink(settings.downloadLink)}
+Use "First time company setup" on the login page to activate the trial workspace.
 Activation code: ${registration.activationCode}
 Licence: ${licence?.id || registration.licenceId}
 Tenant ID: ${licence?.tenantId || registration.tenantId}
