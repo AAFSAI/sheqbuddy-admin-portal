@@ -174,6 +174,44 @@ function hydrateRemoteState(remoteState, currentState) {
   };
 }
 
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function mergeById(remoteItems = [], localItems = [], idField = "id") {
+  const merged = new Map();
+  asArray(remoteItems).forEach((item) => {
+    if (item?.[idField]) merged.set(item[idField], item);
+  });
+  asArray(localItems).forEach((item) => {
+    if (item?.[idField]) merged.set(item[idField], item);
+  });
+  return [...merged.values()];
+}
+
+function mergeAdminStateForSave(localState, remoteState) {
+  const remote = parseRemoteState(remoteState) || {};
+
+  return {
+    ...seedState,
+    ...remote,
+    ...localState,
+    settings: {
+      ...seedState.settings,
+      ...(remote.settings || {}),
+      ...(localState.settings || {}),
+      downloadLink: appAccessLink(localState.settings?.downloadLink || remote.settings?.downloadLink)
+    },
+    registrations: mergeById(remote.registrations, localState.registrations),
+    licences: mergeById(remote.licences, localState.licences),
+    tenants: mergeById(remote.tenants, localState.tenants),
+    devices: mergeById(remote.devices, localState.devices),
+    emails: mergeById(remote.emails, localState.emails),
+    loggedIn: false
+  };
+}
+
 function saveState(nextState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
 }
@@ -186,7 +224,10 @@ async function loadRemoteState() {
 }
 
 async function saveRemoteState(nextState) {
-  const remoteState = { ...nextState, loggedIn: false };
+  const latestRemoteState = await loadRemoteState().catch(() => null);
+  const remoteState = latestRemoteState
+    ? mergeAdminStateForSave(nextState, latestRemoteState)
+    : { ...nextState, settings: { ...nextState.settings, downloadLink: appAccessLink(nextState.settings?.downloadLink) }, loggedIn: false };
   await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -273,11 +314,13 @@ function App() {
     };
   }, []);
 
-  function updateState(updater) {
+  function updateState(updater, options = {}) {
     setState((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       saveState(next);
-      saveRemoteState(next).catch(() => {});
+      if (options.syncRemote !== false) {
+        saveRemoteState(next).catch(() => {});
+      }
       return next;
     });
   }
@@ -291,7 +334,7 @@ function App() {
             setLoginError("Invalid admin login.");
             return;
           }
-          updateState({ ...state, loggedIn: true });
+          updateState({ ...state, loggedIn: true }, { syncRemote: false });
         }}
       />
     );
@@ -337,11 +380,11 @@ function Portal({ state, updateState }) {
   }, [state]);
 
   function setView(selectedView) {
-    updateState({ ...state, selectedView });
+    updateState({ ...state, selectedView }, { syncRemote: false });
   }
 
   function logout() {
-    updateState({ ...state, loggedIn: false });
+    updateState({ ...state, loggedIn: false }, { syncRemote: false });
   }
 
   function exportData() {
