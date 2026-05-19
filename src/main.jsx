@@ -835,10 +835,15 @@ function draftEmail(registration, settings) {
 }
 
 function draftInvoiceEmail(registration, settings, paymentStatus = "Paid") {
+  const recipients = [registration.email, settings.supportEmail || seedState.settings.supportEmail]
+    .filter(Boolean)
+    .filter((email, index, list) => list.indexOf(email) === index)
+    .join(", ");
+
   return {
     id: `EMAIL-${Date.now()}-INV`,
     registrationId: registration.id,
-    to: registration.email,
+    to: recipients,
     subject: `SHEQBuddy tax invoice ${invoiceNumberFor(registration)} - ${registration.company}`,
     body: invoiceBody(registration, settings, paymentStatus),
     stage: "Drafted",
