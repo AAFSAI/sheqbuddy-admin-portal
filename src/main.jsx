@@ -113,7 +113,7 @@ const seedState = {
       id: "EMAIL-0001",
       registrationId: "REG-0002",
       to: "avery@northline.example",
-      subject: "SHEQBuddy app download and activation code",
+      subject: "SHEQBuddy app access and activation code",
       body:
         "Hello Avery Morgan,\n\nRemote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for Northline Manufacturing.\n\nOpen app: https://app.sheqbuddy.com\nActivation code: SHEQ-NOR-6F29-91DA\n\nPayment portal: SHEQBuddy payment portal",
       stage: "Drafted",
@@ -206,6 +206,10 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function appAccessLink(value = seedState.settings.downloadLink) {
+  return String(value || seedState.settings.downloadLink).replace(/\/download\/?$/i, "");
+}
+
 function activationCodeFor(registration) {
   const companyCode = registration.company
     .replace(/[^a-z0-9]/gi, "")
@@ -230,7 +234,7 @@ function emailBody(registration, settings) {
 
 Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for ${registration.company}.
 
-Open app: ${settings.downloadLink}
+Open app: ${appAccessLink(settings.downloadLink)}
 Activation code: ${registration.activationCode}
 ${licence ? `Licence: ${licence.id}
 Tenant ID: ${licence.tenantId}
@@ -676,12 +680,13 @@ function EnabledCustomers({ state, updateState }) {
 }
 
 function draftEmail(registration, settings) {
+  const emailSettings = { ...settings, downloadLink: appAccessLink(settings.downloadLink) };
   return {
     id: `EMAIL-${Date.now()}`,
     registrationId: registration.id,
     to: registration.email,
-    subject: "SHEQBuddy app download and activation code",
-    body: emailBody(registration, settings),
+    subject: "SHEQBuddy app access and activation code",
+    body: emailBody(registration, emailSettings),
     stage: "Drafted",
     createdAt: todayIso()
   };
@@ -854,9 +859,10 @@ function EmailOutbox({ state, updateState }) {
 function SettingsView({ state, updateState }) {
   function submit(event) {
     event.preventDefault();
+    const settings = Object.fromEntries(new FormData(event.currentTarget).entries());
     updateState({
       ...state,
-      settings: Object.fromEntries(new FormData(event.currentTarget).entries())
+      settings: { ...settings, downloadLink: appAccessLink(settings.downloadLink) }
     });
   }
 
@@ -864,7 +870,7 @@ function SettingsView({ state, updateState }) {
     <section className="panel">
       <form className="entry-form" onSubmit={submit}>
         <div className="form-grid">
-          <label>App access link <input name="downloadLink" defaultValue={state.settings.downloadLink} /></label>
+          <label>App access link <input name="downloadLink" defaultValue={appAccessLink(state.settings.downloadLink)} /></label>
           <label>Demo app link <input name="demoLink" defaultValue={state.settings.demoLink} /></label>
           <label>Payment portal name <input name="paymentPortalName" defaultValue={state.settings.paymentPortalName} /></label>
           <label>Payment link <input name="paymentLink" defaultValue={state.settings.paymentLink} /></label>
