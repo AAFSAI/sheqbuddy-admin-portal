@@ -142,6 +142,12 @@ function addDays(value, days) {
   return date.toISOString().slice(0, 10);
 }
 
+function daysBetween(startValue, endValue = todayIso()) {
+  const start = new Date(`${startValue}T00:00:00`);
+  const end = new Date(`${endValue}T00:00:00`);
+  return Math.max(0, Math.round((end - start) / 86400000));
+}
+
 function loadState() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -396,6 +402,7 @@ function routedRecipients(registration, settings) {
 
 function trialNoticeBody(registration, settings) {
   const licence = registration.licence;
+  const trialStartDate = licence?.trialStartDate || todayIso();
   const trialEndDate = licence?.trialEndDate || addDays(todayIso(), 30);
 
   return `Hello ${registration.contactName},
@@ -406,7 +413,7 @@ Open app: ${appAccessLink(settings.downloadLink)}
 Activation code: ${registration.activationCode}
 Licence: ${licence?.id || registration.licenceId}
 Tenant ID: ${licence?.tenantId || registration.tenantId}
-Trial starts: ${formatDate(todayIso())}
+Trial starts: ${formatDate(trialStartDate)}
 Trial ends: ${formatDate(trialEndDate)}
 Subscription start date if activated: ${formatDate(licence?.startDate || addDays(todayIso(), 30))}
 User limit: ${licence?.userLimit || registration.requestedUsers || planUserLimit(registration.plan)}
@@ -420,8 +427,9 @@ Support: ${settings.supportEmail}`;
 
 function trialFollowUpBody(registration, settings) {
   const licence = registration.licence;
-  const trialEndDate = licence?.trialEndDate || addDays(todayIso(), 30);
-  const followUpDate = addDays(todayIso(), 20);
+  const trialStartDate = licence?.trialStartDate || todayIso();
+  const trialEndDate = licence?.trialEndDate || addDays(trialStartDate, 30);
+  const followUpDate = addDays(trialStartDate, 20);
 
   return `Hello ${registration.contactName},
 
@@ -439,6 +447,28 @@ If the customer does not want to continue, SHEQBuddy can deactivate the app afte
 Registration: ${registration.id}
 Licence: ${licence?.id || registration.licenceId}
 Tenant ID: ${licence?.tenantId || registration.tenantId}
+Support: ${settings.supportEmail}`;
+}
+
+function trialPaymentRequiredBody(registration, settings) {
+  const licence = registration.licence;
+  const trialEndDate = licence?.trialEndDate || registration.trialEndDate || todayIso();
+
+  return `Hello ${registration.contactName},
+
+The ${registration.company} SHEQBuddy trial period is ending and payment is now required to keep the app active.
+
+Registration: ${registration.id}
+Licence: ${licence?.id || registration.licenceId}
+Tenant ID: ${licence?.tenantId || registration.tenantId}
+Trial end date: ${formatDate(trialEndDate)}
+Annual subscription: $600.00 AUD excluding GST
+
+Please complete payment using the SHEQBuddy payment portal:
+${settings.paymentLink}
+
+Once payment has been confirmed, SHEQBuddy will activate the annual subscription period. If payment is not completed, SHEQBuddy may deactivate the trial workspace after the trial period.
+
 Support: ${settings.supportEmail}`;
 }
 
@@ -537,10 +567,11 @@ function Portal({ state, updateState }) {
   const stats = useMemo(() => {
     const pending = state.registrations.filter((item) => item.paymentStatus === "Pending").length;
     const enabled = state.licences.filter((item) => item.status === "Active").length;
+    const trials = state.licences.filter((item) => item.paymentStatus === "Trial" || item.status === "Trial").length;
     const emails = state.emails.length;
     const tenants = state.tenants.length;
     const devices = state.devices.filter((item) => item.status === "Active").length;
-    return { pending, enabled, emails, tenants, devices };
+    return { pending, enabled, trials, emails, tenants, devices };
   }, [state]);
 
   function setView(selectedView) {
@@ -565,6 +596,7 @@ function Portal({ state, updateState }) {
         <nav className="nav-list">
           {[
             ["register", "New Registration"],
+            ["trials", "Trial or Pending"],
             ["queue", "Payment Queue"],
             ["tenants", "Tenants"],
             ["enabled", "Licences"],
@@ -599,12 +631,14 @@ function Portal({ state, updateState }) {
         <section className="stats-grid">
           <Stat label="Pending payment" value={stats.pending} />
           <Stat label="Active licences" value={stats.enabled} />
+          <Stat label="Trial customers" value={stats.trials} />
           <Stat label="Tenants" value={stats.tenants} />
           <Stat label="Active devices" value={stats.devices} />
           <Stat label="Email drafts" value={stats.emails} />
         </section>
 
         {state.selectedView === "register" && <RegistrationView state={state} updateState={updateState} />}
+        {state.selectedView === "trials" && <TrialOrPendingView state={state} updateState={updateState} />}
         {state.selectedView === "queue" && <PaymentQueue state={state} updateState={updateState} />}
         {state.selectedView === "tenants" && <TenantRecords state={state} updateState={updateState} />}
         {state.selectedView === "enabled" && <EnabledCustomers state={state} updateState={updateState} />}
@@ -619,6 +653,7 @@ function Portal({ state, updateState }) {
 function viewLabel(view) {
   return {
     register: "New Registration",
+    trials: "Trial or Pending",
     queue: "Payment Queue",
     tenants: "Tenants",
     enabled: "Licences",
@@ -631,6 +666,7 @@ function viewLabel(view) {
 function viewTitle(view) {
   return {
     register: "Create company registration",
+    trials: "Trial customers before payment queue",
     queue: "Verify payments and enable access",
     tenants: "Company tenant records",
     enabled: "Licence and subscription records",
@@ -694,6 +730,118 @@ function RegistrationView({ state, updateState }) {
         </p>
         <button className="primary-button" type="submit">Add to payment queue</button>
       </form>
+    </section>
+  );
+}
+
+function trialMetrics(licence) {
+  const trialStartDate = licence.trialStartDate || addDays(licence.trialEndDate || todayIso(), -30);
+  const trialEndDate = licence.trialEndDate || addDays(trialStartDate, 30);
+  const daysUsed = daysBetween(trialStartDate);
+  const daysRemaining = Math.max(0, 30 - daysUsed);
+  return { trialStartDate, trialEndDate, daysUsed, daysRemaining };
+}
+
+function TrialOrPendingView({ state, updateState }) {
+  const trials = state.licences
+    .filter((licence) => (licence.paymentStatus === "Trial" || licence.status === "Trial") && licence.paymentStatus !== "Pending")
+    .map((licence) => ({
+      licence,
+      registration: state.registrations.find((item) => item.id === licence.registrationId) || licence,
+      tenant: state.tenants.find((item) => item.id === licence.tenantId)
+    }));
+
+  function moveToPaymentQueue(licence) {
+    const registration = state.registrations.find((item) => item.id === licence.registrationId) || licence;
+    const queuedRegistration = {
+      ...registration,
+      stage: "Pending payment",
+      paymentStatus: "Pending",
+      tenantId: licence.tenantId,
+      licenceId: licence.id,
+      activationCode: licence.activationCode,
+      trialEndDate: licence.trialEndDate
+    };
+    const registrationWithLicence = { ...queuedRegistration, licence };
+
+    updateState({
+      ...state,
+      selectedView: "queue",
+      registrations: state.registrations.some((item) => item.id === queuedRegistration.id)
+        ? state.registrations.map((item) => (item.id === queuedRegistration.id ? queuedRegistration : item))
+        : [queuedRegistration, ...state.registrations],
+      licences: state.licences.map((item) =>
+        item.id === licence.id ? { ...item, paymentStatus: "Pending", status: "Trial" } : item
+      ),
+      emails: [draftTrialPaymentRequiredEmail(registrationWithLicence, state.settings), ...state.emails]
+    });
+  }
+
+  function deactivateTrial(licence) {
+    const registration = state.registrations.find((item) => item.id === licence.registrationId) || licence;
+    updateState({
+      ...state,
+      licences: state.licences.map((item) =>
+        item.id === licence.id ? { ...item, status: "Expired", paymentStatus: "Expired" } : item
+      ),
+      tenants: state.tenants.map((item) =>
+        item.id === licence.tenantId ? { ...item, status: "Expired", disabledAt: todayIso() } : item
+      ),
+      registrations: state.registrations.map((item) =>
+        item.id === registration.id ? { ...item, stage: "Expired", paymentStatus: "Expired" } : item
+      )
+    });
+  }
+
+  if (!trials.length) {
+    return (
+      <section className="panel">
+        <p className="muted">No active 30 day trial customers are currently waiting before the payment queue.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel">
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Contact</th>
+              <th>Licence</th>
+              <th>Trial start</th>
+              <th>Trial end</th>
+              <th>Days on trial</th>
+              <th>Days remaining</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trials.map(({ licence, registration, tenant }) => {
+              const metrics = trialMetrics(licence);
+              return (
+                <tr key={licence.id}>
+                  <td>{licence.company}<br /><small>{tenant?.status || "Tenant active"}</small></td>
+                  <td>{licence.contactName}<br /><small>{licence.email}</small></td>
+                  <td><strong>{licence.id}</strong><br /><small>{licence.registrationId}</small></td>
+                  <td>{formatDate(metrics.trialStartDate)}</td>
+                  <td>{formatDate(metrics.trialEndDate)}</td>
+                  <td>{metrics.daysUsed}</td>
+                  <td>{metrics.daysRemaining}</td>
+                  <td>
+                    <div className="action-row">
+                      <button className="secondary-button" type="button" onClick={() => moveToPaymentQueue(licence)}>Move to payment queue</button>
+                      <button className="danger-button" type="button" onClick={() => deactivateTrial(licence)}>Deactivate trial</button>
+                    </div>
+                    <small>{registration.notes || "Trial customer"}</small>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -986,6 +1134,7 @@ function draftTrialNoticeEmail(registration, settings) {
 }
 
 function draftTrialFollowUpEmail(registration, settings) {
+  const trialStartDate = registration.licence?.trialStartDate || todayIso();
   return {
     id: `EMAIL-${Date.now()}-TRIAL-FOLLOWUP`,
     registrationId: registration.id,
@@ -993,7 +1142,19 @@ function draftTrialFollowUpEmail(registration, settings) {
     subject: `SHEQBuddy trial reminder - 10 days remaining - ${registration.company}`,
     body: trialFollowUpBody(registration, settings),
     stage: "Drafted",
-    createdAt: addDays(todayIso(), 20)
+    createdAt: addDays(trialStartDate, 20)
+  };
+}
+
+function draftTrialPaymentRequiredEmail(registration, settings) {
+  return {
+    id: `EMAIL-${Date.now()}-TRIAL-PAYMENT`,
+    registrationId: registration.id,
+    to: routedRecipients(registration, settings),
+    subject: `SHEQBuddy trial ending - payment required - ${registration.company}`,
+    body: trialPaymentRequiredBody(registration, settings),
+    stage: "Drafted",
+    createdAt: todayIso()
   };
 }
 
@@ -1029,7 +1190,8 @@ function createTenant(registration, existingTenants) {
 }
 
 function createLicence(registration, tenant, existingLicences, paymentStatus = "Paid") {
-  const trialEndDate = paymentStatus === "Trial" ? addDays(todayIso(), 30) : "";
+  const trialStartDate = paymentStatus === "Trial" ? todayIso() : "";
+  const trialEndDate = paymentStatus === "Trial" ? addDays(trialStartDate, 30) : "";
   const startDate = paymentStatus === "Trial" ? trialEndDate : todayIso();
   const id = nextLicenceId(existingLicences);
   return {
@@ -1045,6 +1207,7 @@ function createLicence(registration, tenant, existingLicences, paymentStatus = "
     status: paymentStatus === "Waived" || paymentStatus === "Trial" ? "Trial" : "Active",
     paymentStatus,
     activationCode: registration.activationCode,
+    trialStartDate,
     trialEndDate,
     startDate,
     renewalDate: addYears(startDate, 1)
