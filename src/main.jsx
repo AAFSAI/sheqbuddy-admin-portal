@@ -36,6 +36,7 @@ const seedState = {
       id: "REG-0001",
       createdAt: todayIso(),
       company: "Acme Civil",
+      businessNumber: "ABN 12 345 678 901",
       contactName: "Sam Taylor",
       email: "sam@acme.example",
       phone: "0400 000 000",
@@ -52,6 +53,7 @@ const seedState = {
       id: "REG-0002",
       createdAt: todayIso(),
       company: "Northline Manufacturing",
+      businessNumber: "ACN 123 456 789",
       contactName: "Avery Morgan",
       email: "avery@northline.example",
       phone: "0400 111 222",
@@ -274,6 +276,7 @@ function emailBody(registration, settings) {
   return `Hello ${registration.contactName},
 
 Remote and Mobile Applications Technologies Pty Ltd has enabled SHEQBuddy access for ${registration.company}.
+${registration.businessNumber ? `\nACN / ABN: ${registration.businessNumber}\n` : ""}
 
 Open app: ${appAccessLink(settings.downloadLink)}
 Activation code: ${registration.activationCode}
@@ -512,6 +515,7 @@ function RegistrationView({ state, updateState }) {
       <form className="entry-form" onSubmit={submit}>
         <div className="form-grid">
           <label>Company <input name="company" required placeholder="Test Corp Inc." /></label>
+          <label>ACN / ABN, if applicable <input name="businessNumber" placeholder="Optional" /></label>
           <label>Contact name <input name="contactName" required placeholder="Jordan Smith" /></label>
           <label>Email <input name="email" type="email" required placeholder="admin@testcorp.com" /></label>
           <label>Phone <input name="phone" placeholder="+61 ..." /></label>
@@ -580,6 +584,7 @@ function PaymentQueue({ state, updateState }) {
               <th>Date</th>
               <th>Reg #</th>
               <th>Company</th>
+              <th>ACN / ABN</th>
               <th>Contact</th>
               <th>Payment</th>
               <th>Payment status</th>
@@ -593,6 +598,7 @@ function PaymentQueue({ state, updateState }) {
                 <td>{formatDate(item.createdAt)}</td>
                 <td><strong>{item.id}</strong></td>
                 <td>{item.company}</td>
+                <td>{item.businessNumber || "-"}</td>
                 <td>{item.contactName}</td>
                 <td>{item.paymentMethod}<br /><small>{item.paymentReference || "No reference"}</small></td>
                 <td>
@@ -645,6 +651,7 @@ function TenantRecords({ state, updateState }) {
           <h3>{tenant.company}</h3>
           <div className="record-meta">
             <span><strong>Tenant:</strong> {tenant.id}</span>
+            <span><strong>ACN / ABN:</strong> {tenant.businessNumber || "-"}</span>
             <span><strong>Primary contact:</strong> {tenant.primaryContact}</span>
             <span><strong>Email:</strong> {tenant.email}</span>
             <span><strong>Licence:</strong> {tenant.licenceId}</span>
@@ -700,6 +707,7 @@ function EnabledCustomers({ state, updateState }) {
             <span><strong>Tenant:</strong> {item.tenantId}</span>
             <span><strong>Licence:</strong> {item.id}</span>
             <span><strong>Registration:</strong> {item.registrationId}</span>
+            <span><strong>ACN / ABN:</strong> {item.businessNumber || "-"}</span>
             <span><strong>Contact:</strong> {item.contactName}</span>
             <span><strong>Email:</strong> {item.email}</span>
             <span><strong>Plan:</strong> {item.plan}</span>
@@ -744,6 +752,7 @@ function createTenant(registration, existingTenants) {
     id: nextTenantId(existingTenants),
     company: registration.company,
     primaryContact: registration.contactName,
+    businessNumber: registration.businessNumber || "",
     email: registration.email,
     status: "Active",
     licenceId: "",
@@ -761,6 +770,7 @@ function createLicence(registration, tenant, existingLicences, paymentStatus = "
     tenantId: tenant.id,
     registrationId: registration.id,
     company: registration.company,
+    businessNumber: registration.businessNumber || "",
     contactName: registration.contactName,
     email: registration.email,
     plan: registration.plan,
