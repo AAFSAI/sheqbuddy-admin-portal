@@ -11,7 +11,8 @@ const PAYPAL_PAYMENT_URL = "https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W";
 const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5826";
 const SAMPLE_INVOICE_URL = "https://sheqbuddy.com/docs/sample-tax-invoice.html";
 
-const plans = ["Starter - 10 users", "Business - 50 users", "Enterprise - custom"];
+const STANDARD_USER_LIMIT = 25;
+const plans = ["Starter - 25 users", "Enterprise - custom"];
 const paymentMethods = ["Credit card", "PayPal", "Bank transfer", "Manual invoice"];
 const paymentStatuses = ["Pending", "Paid", "Waived", "Trial", "Refunded", "Rejected", "Expired"];
 const tenantStatuses = ["Active", "Suspended", "Expired", "Cancelled"];
@@ -42,8 +43,8 @@ const seedState = {
       contactName: "Sam Taylor",
       email: "sam@acme.example",
       phone: "0400 000 000",
-      plan: "Starter - 10 users",
-      requestedUsers: "10",
+      plan: "Starter - 25 users",
+      requestedUsers: "25",
       paymentMethod: "Credit card",
       paymentReference: "CC-DEMO-1042",
       paymentStatus: "Pending",
@@ -59,8 +60,8 @@ const seedState = {
       contactName: "Avery Morgan",
       email: "avery@northline.example",
       phone: "0400 111 222",
-      plan: "Business - 50 users",
-      requestedUsers: "50",
+      plan: "Starter - 25 users",
+      requestedUsers: "25",
       paymentMethod: "PayPal",
       paymentReference: "PP-DEMO-9088",
       paymentStatus: "Paid",
@@ -77,8 +78,8 @@ const seedState = {
       company: "Northline Manufacturing",
       contactName: "Avery Morgan",
       email: "avery@northline.example",
-      plan: "Business - 50 users",
-      userLimit: "50",
+      plan: "Starter - 25 users",
+      userLimit: "25",
       status: "Active",
       paymentStatus: "Paid",
       activationCode: "SHEQ-NOR-6F29-91DA",
@@ -155,8 +156,8 @@ function loadState() {
       ...seedState,
       ...stored,
       settings: { ...seedState.settings, ...(stored?.settings || {}) },
-      registrations: stored?.registrations || seedState.registrations,
-      licences: stored?.licences || seedState.licences,
+      registrations: normalizeRegistrations(stored?.registrations || seedState.registrations),
+      licences: normalizeLicences(stored?.licences || seedState.licences),
       tenants: stored?.tenants || seedState.tenants,
       devices: stored?.devices || seedState.devices,
       emails: stored?.emails || seedState.emails
@@ -180,8 +181,8 @@ function hydrateRemoteState(remoteState, currentState) {
     ...seedState,
     ...parsed,
     settings: { ...seedState.settings, ...(parsed.settings || {}) },
-    registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
-    licences: Array.isArray(parsed.licences) ? parsed.licences : [],
+    registrations: normalizeRegistrations(Array.isArray(parsed.registrations) ? parsed.registrations : []),
+    licences: normalizeLicences(Array.isArray(parsed.licences) ? parsed.licences : []),
     tenants: Array.isArray(parsed.tenants) ? parsed.tenants : [],
     devices: Array.isArray(parsed.devices) ? parsed.devices : [],
     emails: Array.isArray(parsed.emails) ? parsed.emails : [],
@@ -273,6 +274,27 @@ function formatInvoiceDate(value = todayIso()) {
 
 function currency(value) {
   return `$${Number(value).toFixed(2)}`;
+}
+
+function standardUserLimit(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return String(STANDARD_USER_LIMIT);
+  return String(Math.min(Math.floor(number), STANDARD_USER_LIMIT));
+}
+
+function normalizeRegistrations(registrations = []) {
+  return registrations.map((registration) => ({
+    ...registration,
+    requestedUsers: standardUserLimit(registration.requestedUsers)
+  }));
+}
+
+function normalizeLicences(licences = []) {
+  return licences.map((licence) => ({
+    ...licence,
+    plan: licence.plan?.includes("Business") ? "Starter - 25 users" : licence.plan,
+    userLimit: standardUserLimit(licence.userLimit)
+  }));
 }
 
 function appAccessLink(value = seedState.settings.downloadLink) {
@@ -690,6 +712,7 @@ function RegistrationView({ state, updateState }) {
       id: nextRegistrationId(state.registrations),
       createdAt: todayIso(),
       ...data,
+      requestedUsers: standardUserLimit(data.requestedUsers),
       paymentStatus: "Pending",
       stage: "Pending payment",
       activationCode: ""
@@ -719,7 +742,7 @@ function RegistrationView({ state, updateState }) {
           <label>Email <input name="email" type="email" required placeholder="admin@testcorp.com" /></label>
           <label>Phone <input name="phone" placeholder="+61 ..." /></label>
           <label>Plan <select name="plan">{plans.map((plan) => <option key={plan}>{plan}</option>)}</select></label>
-          <label>Requested users <input name="requestedUsers" placeholder="25" /></label>
+          <label>Requested users <input name="requestedUsers" type="number" min="1" max="25" placeholder="25" /></label>
           <label>Payment method <select name="paymentMethod">{paymentMethods.map((method) => <option key={method}>{method}</option>)}</select></label>
           <label>Payment reference <input name="paymentReference" placeholder="PayPal / card / invoice reference" /></label>
           <label className="wide">Notes <textarea name="notes" placeholder="Payment details, sales notes or onboarding requirements." /></label>
@@ -1204,8 +1227,8 @@ function createLicence(registration, tenant, existingLicences, paymentStatus = "
     businessNumber: registration.businessNumber || "",
     contactName: registration.contactName,
     email: registration.email,
-    plan: registration.plan,
-    userLimit: registration.requestedUsers || planUserLimit(registration.plan),
+      plan: registration.plan,
+      userLimit: standardUserLimit(registration.requestedUsers || planUserLimit(registration.plan)),
     status: paymentStatus === "Waived" || paymentStatus === "Trial" ? "Trial" : "Active",
     paymentStatus,
     activationCode: registration.activationCode,
@@ -1233,8 +1256,7 @@ function nextLicenceId(licences) {
 }
 
 function planUserLimit(plan) {
-  if (plan.includes("Starter")) return "10";
-  if (plan.includes("Business")) return "50";
+  if (plan.includes("Starter")) return String(STANDARD_USER_LIMIT);
   return "Custom";
 }
 
