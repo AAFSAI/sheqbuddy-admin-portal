@@ -2,10 +2,14 @@
 
 Vite React portal for registration, payment verification, activation code issue and email draft workflows.
 
-## Demo login
+## Admin login
 
-- Email: `admin@sheqbuddy.com`
-- Password: `SHEQAdmin1`
+The portal authenticates through the SHEQBuddy API.
+
+Configure these API environment variables in Hostinger:
+
+- `ADMIN_PORTAL_EMAIL`
+- `ADMIN_PORTAL_PASSWORD`
 
 ## Hostinger deployment
 
@@ -16,7 +20,6 @@ Vite React portal for registration, payment verification, activation code issue 
 
 ## Production services still required
 
-- Real authentication and password reset
 - Backend API and database
 - Payment provider integration or verified payment webhook
 - Email delivery service

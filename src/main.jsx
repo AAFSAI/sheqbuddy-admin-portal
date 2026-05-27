@@ -3,10 +3,9 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const STORAGE_KEY = "sheqbuddy-admin-portal-v1";
+const ADMIN_SESSION_KEY = "sheqbuddy-admin-session-v1";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://api.sheqbuddy.com";
 const API_WORKSPACE_KEY = import.meta.env.VITE_API_WORKSPACE_KEY || "sheqbuddy-admin";
-const ADMIN_EMAIL = "admin@sheqbuddy.com";
-const ADMIN_PASSWORD = "SHEQAdmin1";
 const PAYPAL_PAYMENT_URL = "https://www.paypal.com/ncp/payment/GZ5K6E5GYGX5W";
 const BANK_TRANSFER_DETAILS = "RAMA Technologies, NAB, BSB 084-789, Acc 11-868-5826";
 const SAMPLE_INVOICE_URL = "https://sheqbuddy.com/docs/sample-tax-invoice.html";
@@ -29,8 +28,8 @@ const seedState = {
     paymentLink: PAYPAL_PAYMENT_URL,
     sampleInvoiceLink: SAMPLE_INVOICE_URL,
     bankTransferDetails: BANK_TRANSFER_DETAILS,
-    adminEmail: "admin@sheqbuddy.com",
-    supportEmail: "info@SHEQBuddy.com",
+    adminEmail: "info@sheqbuddy.com",
+    supportEmail: "support@sheqbuddy.com",
     emailFooter:
       "Remote and Mobile Applications Technologies Pty Ltd. Payment access is managed separately from the SHEQBuddy app."
   },
@@ -155,7 +154,8 @@ function loadState() {
     return {
       ...seedState,
       ...stored,
-      settings: { ...seedState.settings, ...(stored?.settings || {}) },
+      loggedIn: Boolean(adminSessionToken()),
+      settings: normalizeSettings(stored?.settings),
       registrations: normalizeRegistrations(stored?.registrations || seedState.registrations),
       licences: normalizeLicences(stored?.licences || seedState.licences),
       tenants: stored?.tenants || seedState.tenants,
@@ -163,8 +163,12 @@ function loadState() {
       emails: stored?.emails || seedState.emails
     };
   } catch {
-    return seedState;
+    return { ...seedState, loggedIn: Boolean(adminSessionToken()) };
   }
+}
+
+function adminSessionToken() {
+  return sessionStorage.getItem(ADMIN_SESSION_KEY) || "";
 }
 
 function parseRemoteState(remoteState) {
@@ -180,7 +184,7 @@ function hydrateRemoteState(remoteState, currentState) {
   return {
     ...seedState,
     ...parsed,
-    settings: { ...seedState.settings, ...(parsed.settings || {}) },
+    settings: normalizeSettings(parsed.settings),
     registrations: normalizeRegistrations(Array.isArray(parsed.registrations) ? parsed.registrations : []),
     licences: normalizeLicences(Array.isArray(parsed.licences) ? parsed.licences : []),
     tenants: Array.isArray(parsed.tenants) ? parsed.tenants : [],
@@ -194,6 +198,17 @@ function hydrateRemoteState(remoteState, currentState) {
 function asArray(value) {
   if (Array.isArray(value)) return value;
   return value ? [value] : [];
+}
+
+function normalizeSettings(settings = {}) {
+  const normalized = { ...seedState.settings, ...(settings || {}) };
+  if (!normalized.adminEmail || normalized.adminEmail === "admin@sheqbuddy.com") {
+    normalized.adminEmail = "info@sheqbuddy.com";
+  }
+  if (!normalized.supportEmail || normalized.supportEmail.toLowerCase() === "info@sheqbuddy.com") {
+    normalized.supportEmail = "support@sheqbuddy.com";
+  }
+  return normalized;
 }
 
 function mergeById(remoteItems = [], localItems = [], idField = "id") {
@@ -214,12 +229,12 @@ function mergeAdminStateForSave(localState, remoteState) {
     ...seedState,
     ...remote,
     ...localState,
-    settings: {
+    settings: normalizeSettings({
       ...seedState.settings,
       ...(remote.settings || {}),
       ...(localState.settings || {}),
       downloadLink: appAccessLink(localState.settings?.downloadLink || remote.settings?.downloadLink)
-    },
+    }),
     registrations: mergeById(remote.registrations, localState.registrations),
     licences: mergeById(remote.licences, localState.licences),
     tenants: mergeById(remote.tenants, localState.tenants),
@@ -233,21 +248,37 @@ function saveState(nextState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
 }
 
-async function loadRemoteState() {
-  const response = await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`);
+async function adminLogin(email, password) {
+  const response = await fetch(`${API_BASE_URL}/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Admin login failed");
+  }
+  sessionStorage.setItem(ADMIN_SESSION_KEY, data.token);
+  return data;
+}
+
+async function loadRemoteState(token = adminSessionToken()) {
+  const response = await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
   if (!response.ok) return null;
   const data = await response.json();
   return data.ok ? data.state : null;
 }
 
-async function saveRemoteState(nextState) {
-  const latestRemoteState = await loadRemoteState().catch(() => null);
+async function saveRemoteState(nextState, token = adminSessionToken()) {
+  const latestRemoteState = await loadRemoteState(token).catch(() => null);
   const remoteState = latestRemoteState
     ? mergeAdminStateForSave(nextState, latestRemoteState)
-    : { ...nextState, settings: { ...nextState.settings, downloadLink: appAccessLink(nextState.settings?.downloadLink) }, loggedIn: false };
+    : { ...nextState, settings: normalizeSettings({ ...nextState.settings, downloadLink: appAccessLink(nextState.settings?.downloadLink) }), loggedIn: false };
   await fetch(`${API_BASE_URL}/state/admin-portal?key=${encodeURIComponent(API_WORKSPACE_KEY)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ state: remoteState })
   });
 }
@@ -515,6 +546,7 @@ function App() {
   const [loginError, setLoginError] = useState("");
 
   useEffect(() => {
+    if (!state.loggedIn) return undefined;
     let cancelled = false;
     loadRemoteState()
       .then((remoteState) => {
@@ -530,7 +562,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [state.loggedIn]);
 
   function updateState(updater, options = {}) {
     setState((current) => {
@@ -547,12 +579,14 @@ function App() {
     return (
       <LoginScreen
         error={loginError}
-        onLogin={(email, password) => {
-          if (email.toLowerCase() !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-            setLoginError("Invalid admin login.");
-            return;
+        onLogin={async (email, password) => {
+          try {
+            await adminLogin(email, password);
+            setLoginError("");
+            updateState({ ...state, loggedIn: true }, { syncRemote: false });
+          } catch (error) {
+            setLoginError(error.message);
           }
-          updateState({ ...state, loggedIn: true }, { syncRemote: false });
         }}
       />
     );
@@ -562,10 +596,15 @@ function App() {
 }
 
 function LoginScreen({ error, onLogin }) {
+  const [busy, setBusy] = useState(false);
+
   function submit(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    onLogin(String(form.get("email") || ""), String(form.get("password") || ""));
+    setBusy(true);
+    Promise.resolve(onLogin(String(form.get("email") || ""), String(form.get("password") || ""))).finally(() => {
+      setBusy(false);
+    });
   }
 
   return (
@@ -578,10 +617,10 @@ function LoginScreen({ error, onLogin }) {
           Review registrations, record payment references, verify payment offline,
           enable customers and draft activation emails.
         </p>
-        <label>Email <input name="email" type="email" defaultValue={ADMIN_EMAIL} required /></label>
-        <label>Password <input name="password" type="password" defaultValue={ADMIN_PASSWORD} required /></label>
+        <label>Email <input name="email" type="email" autoComplete="username" required /></label>
+        <label>Password <input name="password" type="password" autoComplete="current-password" required /></label>
         <p className="form-message">{error}</p>
-        <button className="primary-button" type="submit">Open portal</button>
+        <button className="primary-button" type="submit" disabled={busy}>{busy ? "Checking login..." : "Open portal"}</button>
       </form>
     </section>
   );
@@ -603,6 +642,7 @@ function Portal({ state, updateState }) {
   }
 
   function logout() {
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
     updateState({ ...state, loggedIn: false }, { syncRemote: false });
   }
 
